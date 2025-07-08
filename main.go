@@ -93,6 +93,34 @@ http.HandleFunc("/employees", func(w http.ResponseWriter, r *http.Request) {
     }
 })
 
+// Handle GET /employees/{id} to get a specific employee
+http.HandleFunc("/employees/", func(w http.ResponseWriter, r *http.Request) {
+    if r.Method != http.MethodGet {
+        http.Error(w, "Only GET allowed", http.StatusMethodNotAllowed)
+        return
+    }
+
+    idStr := r.URL.Path[len("/employees/"):]
+    var emp Employee
+
+    query := `SELECT id, name, email, position, department, salary, created_at FROM employees WHERE id = $1`
+    err := db.QueryRow(query, idStr).Scan(
+        &emp.ID, &emp.Name, &emp.Email, &emp.Position,
+        &emp.Department, &emp.Salary, &emp.CreatedAt,
+    )
+
+    if err == sql.ErrNoRows {
+        http.Error(w, "Employee not found", http.StatusNotFound)
+        return
+    } else if err != nil {
+        http.Error(w, "DB error", http.StatusInternalServerError)
+        log.Println("QueryRow error:", err)
+        return
+    }
+
+    w.Header().Set("Content-Type", "application/json")
+    json.NewEncoder(w).Encode(emp)
+})
 
     log.Println("Starting server on :8080")
     if err := http.ListenAndServe(":8080", nil); err != nil {
