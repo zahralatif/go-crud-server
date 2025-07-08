@@ -6,6 +6,8 @@ import (
     "fmt"
     "log"
     "net/http"
+    "strconv"
+    "strings"
 
     _ "github.com/lib/pq"
 )
@@ -96,25 +98,26 @@ http.HandleFunc("/employees", func(w http.ResponseWriter, r *http.Request) {
 // Handle GET /employees/{id} to get a specific employee
 http.HandleFunc("/employees/", func(w http.ResponseWriter, r *http.Request) {
     if r.Method != http.MethodGet {
-        http.Error(w, "Only GET allowed", http.StatusMethodNotAllowed)
+        http.Error(w, "Only GET supported", http.StatusMethodNotAllowed)
         return
     }
 
-    idStr := r.URL.Path[len("/employees/"):]
+    idStr := strings.TrimPrefix(r.URL.Path, "/employees/")
+    id, err := strconv.Atoi(idStr)
+    if err != nil {
+        http.Error(w, "Invalid ID format", http.StatusBadRequest)
+        return
+    }
+
     var emp Employee
-
     query := `SELECT id, name, email, position, department, salary, created_at FROM employees WHERE id = $1`
-    err := db.QueryRow(query, idStr).Scan(
-        &emp.ID, &emp.Name, &emp.Email, &emp.Position,
-        &emp.Department, &emp.Salary, &emp.CreatedAt,
-    )
-
+    row := db.QueryRow(query, id)
+    err = row.Scan(&emp.ID, &emp.Name, &emp.Email, &emp.Position, &emp.Department, &emp.Salary, &emp.CreatedAt)
     if err == sql.ErrNoRows {
         http.Error(w, "Employee not found", http.StatusNotFound)
         return
     } else if err != nil {
         http.Error(w, "DB error", http.StatusInternalServerError)
-        log.Println("QueryRow error:", err)
         return
     }
 
