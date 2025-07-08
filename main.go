@@ -95,13 +95,8 @@ http.HandleFunc("/employees", func(w http.ResponseWriter, r *http.Request) {
     }
 })
 
-// Handle GET /employees/{id} to get a specific employee
+// Handle individual employee operations
 http.HandleFunc("/employees/", func(w http.ResponseWriter, r *http.Request) {
-    if r.Method != http.MethodGet {
-        http.Error(w, "Only GET supported", http.StatusMethodNotAllowed)
-        return
-    }
-
     idStr := strings.TrimPrefix(r.URL.Path, "/employees/")
     id, err := strconv.Atoi(idStr)
     if err != nil {
@@ -109,21 +104,55 @@ http.HandleFunc("/employees/", func(w http.ResponseWriter, r *http.Request) {
         return
     }
 
-    var emp Employee
-    query := `SELECT id, name, email, position, department, salary, created_at FROM employees WHERE id = $1`
-    row := db.QueryRow(query, id)
-    err = row.Scan(&emp.ID, &emp.Name, &emp.Email, &emp.Position, &emp.Department, &emp.Salary, &emp.CreatedAt)
-    if err == sql.ErrNoRows {
-        http.Error(w, "Employee not found", http.StatusNotFound)
-        return
-    } else if err != nil {
-        http.Error(w, "DB error", http.StatusInternalServerError)
-        return
-    }
+    switch r.Method {
+    case http.MethodGet:
+        // GET /employees/{id}
+        var emp Employee
+        query := `SELECT id, name, email, position, department, salary, created_at FROM employees WHERE id = $1`
+        row := db.QueryRow(query, id)
+        err := row.Scan(&emp.ID, &emp.Name, &emp.Email, &emp.Position, &emp.Department, &emp.Salary, &emp.CreatedAt)
+        if err == sql.ErrNoRows {
+            http.Error(w, "Employee not found", http.StatusNotFound)
+            return
+        } else if err != nil {
+            http.Error(w, "DB error", http.StatusInternalServerError)
+            return
+        }
 
-    w.Header().Set("Content-Type", "application/json")
-    json.NewEncoder(w).Encode(emp)
+        w.Header().Set("Content-Type", "application/json")
+        json.NewEncoder(w).Encode(emp)
+
+    case http.MethodPut:
+        // PUT /employees/{id}
+        var emp Employee
+        err := json.NewDecoder(r.Body).Decode(&emp)
+        if err != nil {
+            http.Error(w, "Invalid JSON body", http.StatusBadRequest)
+            return
+        }
+
+        query := `UPDATE employees SET name=$1, email=$2, position=$3, department=$4, salary=$5 WHERE id=$6`
+        res, err := db.Exec(query, emp.Name, emp.Email, emp.Position, emp.Department, emp.Salary, id)
+        if err != nil {
+            http.Error(w, "DB update failed", http.StatusInternalServerError)
+            return
+        }
+
+        count, err := res.RowsAffected()
+        if err != nil || count == 0 {
+            http.Error(w, "No employee updated", http.StatusNotFound)
+            return
+        }
+
+        emp.ID = id
+        w.Header().Set("Content-Type", "application/json")
+        json.NewEncoder(w).Encode(emp)
+
+    default:
+        http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+    }
 })
+
 
     log.Println("Starting server on :8080")
     if err := http.ListenAndServe(":8080", nil); err != nil {
