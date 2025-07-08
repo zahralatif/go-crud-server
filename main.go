@@ -148,12 +148,29 @@ http.HandleFunc("/employees/", func(w http.ResponseWriter, r *http.Request) {
         w.Header().Set("Content-Type", "application/json")
         json.NewEncoder(w).Encode(emp)
 
+    // DELETE /employees/{id}
+    case http.MethodDelete:
+        query := `DELETE FROM employees WHERE id=$1`
+        res, err := db.Exec(query, id)
+        if err != nil {
+            http.Error(w, "DB delete failed", http.StatusInternalServerError)
+            return
+        }
+
+        count, err := res.RowsAffected()
+        if err != nil || count == 0 {
+            http.Error(w, "Employee not found", http.StatusNotFound)
+            return
+        }
+
+        w.WriteHeader(http.StatusNoContent)
+
     default:
         http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
     }
 })
 
-
+    // Start the HTTP server
     log.Println("Starting server on :8080")
     if err := http.ListenAndServe(":8080", nil); err != nil {
         log.Fatalf("HTTP server failed: %v", err)
