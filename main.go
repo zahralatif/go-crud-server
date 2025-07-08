@@ -2,12 +2,23 @@ package main
 
 import (
     "database/sql"
+    "encoding/json"
     "fmt"
     "log"
     "net/http"
 
     _ "github.com/lib/pq"
 )
+
+type Employee struct {
+    ID         int     `json:"id"`
+    Name       string  `json:"name"`
+    Email      string  `json:"email"`
+    Position   string  `json:"position"`
+    Department string  `json:"department"`
+    Salary     float64 `json:"salary"`
+    CreatedAt  string  `json:"created_at"`
+}
 
 const dbConnStr = "postgres://zahra:Zl-l%40b-l%40t1%21%40%23@db-01.lab.internal/amhsdb?sslmode=disable"
 
@@ -28,53 +39,63 @@ func main() {
         fmt.Fprintln(w, "Go server running!")
     })
 
+http.HandleFunc("/employees", func(w http.ResponseWriter, r *http.Request) {
+    switch r.Method {
+    case http.MethodGet:
+        // GET /employees - all employees
+        rows, err := db.Query("SELECT id, name, email, position, department, salary, created_at FROM employees")
+        if err != nil {
+            http.Error(w, "DB query failed", http.StatusInternalServerError)
+            log.Println("Query error:", err)
+            return
+        }
+        defer rows.Close()
+
+        var employees []Employee
+        for rows.Next() {
+            var emp Employee
+            err := rows.Scan(&emp.ID, &emp.Name, &emp.Email, &emp.Position, &emp.Department, &emp.Salary, &emp.CreatedAt)
+            if err != nil {
+                http.Error(w, "Scan failed", http.StatusInternalServerError)
+                log.Println("Scan error:", err)
+                return
+            }
+            employees = append(employees, emp)
+        }
+
+        w.Header().Set("Content-Type", "application/json")
+        json.NewEncoder(w).Encode(employees)
+
+    case http.MethodPost:
+        // POST /employees - create new employee
+        var emp Employee
+        err := json.NewDecoder(r.Body).Decode(&emp)
+        if err != nil {
+            http.Error(w, "Invalid JSON", http.StatusBadRequest)
+            log.Println("Decode error:", err)
+            return
+        }
+
+        query := `INSERT INTO employees (name, email, position, department, salary)
+                  VALUES ($1, $2, $3, $4, $5) RETURNING id`
+        err = db.QueryRow(query, emp.Name, emp.Email, emp.Position, emp.Department, emp.Salary).Scan(&emp.ID)
+        if err != nil {
+            http.Error(w, "DB insert failed", http.StatusInternalServerError)
+            log.Println("Insert error:", err)
+            return
+        }
+
+        w.WriteHeader(http.StatusCreated)
+        json.NewEncoder(w).Encode(emp)
+
+    default:
+        http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+    }
+})
+
+
     log.Println("Starting server on :8080")
     if err := http.ListenAndServe(":8080", nil); err != nil {
         log.Fatalf("HTTP server failed: %v", err)
     }
 }
-
-// File: main.go
-// Description: This Go program connects to a PostgreSQL database using a DSN loaded from a
-// .env file. It uses the "github.com/joho/godotenv" package to load environment variables
-// and the "github.com/lib/pq" package as the PostgreSQL driver.
-// It logs the connection status and handles errors appropriately.
-// Usage: Ensure you have a .env file with the DB_DSN variable set to your PostgreSQL connection string.
-
-
-// package main
-
-// import (
-//     "database/sql"
-//     "log"
-//     "os"
-
-//     _ "github.com/lib/pq"
-//     "github.com/joho/godotenv"
-// )
-
-// func main() {
-//     err := godotenv.Load()
-//     if err != nil {
-//         log.Fatal("Error loading .env file")
-//     }
-
-//     dsn := os.Getenv("DB_DSN")
-//     if dsn == "" {
-//         log.Fatal("DB_DSN not found in environment")
-//     }
-
-// 	log.Println("DSN from .env:", dsn) //check if DSN is loaded correctly
-
-//     db, err := sql.Open("postgres", dsn)
-//     if err != nil {
-//         log.Fatal("Failed to open DB:", err)
-//     }
-//     defer db.Close()
-
-//     if err = db.Ping(); err != nil {
-//         log.Fatal("DB ping failed:a", err)
-//     }
-
-//     log.Println("Connected to PostgreSQL via .env config")
-// }
