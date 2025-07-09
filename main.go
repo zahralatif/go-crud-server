@@ -2,6 +2,7 @@ package main
 
 import (
     "database/sql"
+    "encoding/base64"
     "encoding/json"
     "fmt"
     "log"
@@ -24,8 +25,11 @@ type Employee struct {
 
 const dbConnStr = "postgres://zahra:Zl-l%40b-l%40t1%21%40%23@db-01.lab.internal/amhsdb?sslmode=disable"
 
+var db *sql.DB
+
 func main() {
-    db, err := sql.Open("postgres", dbConnStr)
+    var err error
+    db, err = sql.Open("postgres", dbConnStr)
     if err != nil {
         log.Fatalf("DB connection failed: %v", err)
     }
@@ -37,18 +41,25 @@ func main() {
 
     fmt.Println("Connected to DB")
 
-    http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+    http.HandleFunc("/", basicAuthMiddleware(func(w http.ResponseWriter, r *http.Request) {
         fmt.Fprintln(w, "Go server running!")
-    })
+    }))
 
-http.HandleFunc("/employees", func(w http.ResponseWriter, r *http.Request) {
+    http.HandleFunc("/employees", basicAuthMiddleware(employeesHandler))
+    http.HandleFunc("/employees/", basicAuthMiddleware(employeeByIDHandler))
+
+    log.Println("Starting server on :8080")
+    if err := http.ListenAndServe(":8080", nil); err != nil {
+        log.Fatalf("HTTP server failed: %v", err)
+    }
+}
+
+func employeesHandler(w http.ResponseWriter, r *http.Request) {
     switch r.Method {
     case http.MethodGet:
-        // GET /employees - all employees
         rows, err := db.Query("SELECT id, name, email, position, department, salary, created_at FROM employees")
         if err != nil {
             http.Error(w, "DB query failed", http.StatusInternalServerError)
-            log.Println("Query error:", err)
             return
         }
         defer rows.Close()
@@ -59,7 +70,6 @@ http.HandleFunc("/employees", func(w http.ResponseWriter, r *http.Request) {
             err := rows.Scan(&emp.ID, &emp.Name, &emp.Email, &emp.Position, &emp.Department, &emp.Salary, &emp.CreatedAt)
             if err != nil {
                 http.Error(w, "Scan failed", http.StatusInternalServerError)
-                log.Println("Scan error:", err)
                 return
             }
             employees = append(employees, emp)
@@ -69,12 +79,10 @@ http.HandleFunc("/employees", func(w http.ResponseWriter, r *http.Request) {
         json.NewEncoder(w).Encode(employees)
 
     case http.MethodPost:
-        // POST /employees - create new employee
         var emp Employee
         err := json.NewDecoder(r.Body).Decode(&emp)
         if err != nil {
             http.Error(w, "Invalid JSON", http.StatusBadRequest)
-            log.Println("Decode error:", err)
             return
         }
 
@@ -83,7 +91,6 @@ http.HandleFunc("/employees", func(w http.ResponseWriter, r *http.Request) {
         err = db.QueryRow(query, emp.Name, emp.Email, emp.Position, emp.Department, emp.Salary).Scan(&emp.ID)
         if err != nil {
             http.Error(w, "DB insert failed", http.StatusInternalServerError)
-            log.Println("Insert error:", err)
             return
         }
 
@@ -93,10 +100,9 @@ http.HandleFunc("/employees", func(w http.ResponseWriter, r *http.Request) {
     default:
         http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
     }
-})
+}
 
-// Handle individual employee operations
-http.HandleFunc("/employees/", func(w http.ResponseWriter, r *http.Request) {
+func employeeByIDHandler(w http.ResponseWriter, r *http.Request) {
     idStr := strings.TrimPrefix(r.URL.Path, "/employees/")
     id, err := strconv.Atoi(idStr)
     if err != nil {
@@ -106,7 +112,6 @@ http.HandleFunc("/employees/", func(w http.ResponseWriter, r *http.Request) {
 
     switch r.Method {
     case http.MethodGet:
-        // GET /employees/{id}
         var emp Employee
         query := `SELECT id, name, email, position, department, salary, created_at FROM employees WHERE id = $1`
         row := db.QueryRow(query, id)
@@ -123,7 +128,6 @@ http.HandleFunc("/employees/", func(w http.ResponseWriter, r *http.Request) {
         json.NewEncoder(w).Encode(emp)
 
     case http.MethodPut:
-        // PUT /employees/{id}
         var emp Employee
         err := json.NewDecoder(r.Body).Decode(&emp)
         if err != nil {
@@ -148,7 +152,6 @@ http.HandleFunc("/employees/", func(w http.ResponseWriter, r *http.Request) {
         w.Header().Set("Content-Type", "application/json")
         json.NewEncoder(w).Encode(emp)
 
-    // DELETE /employees/{id}
     case http.MethodDelete:
         query := `DELETE FROM employees WHERE id=$1`
         res, err := db.Exec(query, id)
@@ -168,11 +171,29 @@ http.HandleFunc("/employees/", func(w http.ResponseWriter, r *http.Request) {
     default:
         http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
     }
-})
+}
 
-    // Start the HTTP server
-    log.Println("Starting server on :8080")
-    if err := http.ListenAndServe(":8080", nil); err != nil {
-        log.Fatalf("HTTP server failed: %v", err)
+func basicAuthMiddleware(next http.HandlerFunc) http.HandlerFunc {
+    return func(w http.ResponseWriter, r *http.Request) {
+        auth := r.Header.Get("Authorization")
+        if auth == "" || !strings.HasPrefix(auth, "Basic ") {
+            w.Header().Set("WWW-Authenticate", `Basic realm="restricted"`)
+            http.Error(w, "Authorization required", http.StatusUnauthorized)
+            return
+        }
+
+        payload, err := base64.StdEncoding.DecodeString(strings.TrimPrefix(auth, "Basic "))
+        if err != nil {
+            http.Error(w, "Invalid auth format", http.StatusUnauthorized)
+            return
+        }
+
+        parts := strings.SplitN(string(payload), ":", 2)
+        if len(parts) != 2 || parts[0] != "admin" || parts[1] != "secret123" {
+            http.Error(w, "Invalid credentials", http.StatusUnauthorized)
+            return
+        }
+
+        next.ServeHTTP(w, r)
     }
 }
