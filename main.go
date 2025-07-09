@@ -173,6 +173,8 @@ func employeeByIDHandler(w http.ResponseWriter, r *http.Request) {
     }
 }
 
+var authAttempts = make(map[string]int)
+
 func basicAuthMiddleware(next http.HandlerFunc) http.HandlerFunc {
     return func(w http.ResponseWriter, r *http.Request) {
         auth := r.Header.Get("Authorization")
@@ -184,16 +186,33 @@ func basicAuthMiddleware(next http.HandlerFunc) http.HandlerFunc {
 
         payload, err := base64.StdEncoding.DecodeString(strings.TrimPrefix(auth, "Basic "))
         if err != nil {
+            log.Printf("Base64 decode error from %s: %v", r.RemoteAddr, err)
             http.Error(w, "Invalid auth format", http.StatusUnauthorized)
             return
         }
 
         parts := strings.SplitN(string(payload), ":", 2)
-        if len(parts) != 2 || parts[0] != "admin" || parts[1] != "secret123" {
+        if len(parts) != 2 {
+            log.Printf("Malformed auth payload from %s", r.RemoteAddr)
+            http.Error(w, "Invalid auth format", http.StatusUnauthorized)
+            return
+        }
+
+        ip := strings.Split(r.RemoteAddr, ":")[0]
+        if parts[0] != "admin" || parts[1] != "secret123" {
+            authAttempts[ip]++
+            log.Printf("Invalid credentials from %s for user: %s (attempt %d)", ip, parts[0], authAttempts[ip])
+            if authAttempts[ip] > 5 {
+                log.Printf("Too many failed auth attempts from %s", ip)
+                http.Error(w, "Too many failed attempts", http.StatusTooManyRequests)
+                return
+            }
             http.Error(w, "Invalid credentials", http.StatusUnauthorized)
             return
         }
 
+        authAttempts[ip] = 0
         next.ServeHTTP(w, r)
     }
 }
+
